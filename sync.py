@@ -84,9 +84,12 @@ def load_config(path: str) -> dict:
 # --------------------------------------------------------------------------
 
 def fetch_sheet(spreadsheet_id: str, gid: int) -> list[list[str]]:
+    # gviz endpoint: still works when the owner has disabled downloads for
+    # viewers, which blocks /export with a 401. headers=0 stops Google guessing
+    # header rows and merging them; find_header() locates the real one.
     url = (
         f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
-        f"/export?format=csv&gid={gid}"
+        f"/gviz/tq?tqx=out:csv&gid={gid}&headers=0"
     )
     resp = requests.get(url, timeout=60, allow_redirects=True)
     if resp.status_code != 200:
@@ -309,7 +312,10 @@ def main() -> int:
 
     if args.dry_run:
         for p in sorted(postings, key=lambda p: p.studio.lower()):
-            print(f"  - {p.studio} | {p.role} | {p.location} | {p.url}")
+            print(
+                f"  - {p.studio} | {p.role} | {p.location} | "
+                f"{p.date_issued or 'NO DATE'} | {p.url}"
+            )
         return 0
 
     notion = Notion(token, database_id)
