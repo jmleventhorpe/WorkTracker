@@ -1,0 +1,61 @@
+# Community job sheet -> Notion Job Tracker
+# Edit this file to change filtering. No code changes needed.
+
+[sheet]
+# "Openings" tab of the community job postings sheet (gid=0).
+spreadsheet_id = "1eR2oAXOuflr8CZeGoz3JTrsgNj3KuefbdXJOmNtjEVM"
+gid = 0
+
+[filters]
+# A row is kept when its job title contains one of these (case-insensitive,
+# matched on word boundaries so "lighting" does not match "highlighting").
+title_keywords = [
+    "rigging",
+    "rigger",
+    "creature td",
+    "creature technical director",
+    "lighting artist",
+    "lighting",
+    "pipeline",
+    "generalist",
+]
+
+# Dropped even if the title matched above. FX is a different discipline
+# (simulation work), so "FX / Lighting TD" style titles are excluded.
+title_exclusions = [
+    "fx td",
+    "fx artist",
+    "fx supervisor",
+    "fx lead",
+    "effects td",
+    "effects artist",
+    "cfx",
+    "crowd",
+]
+
+# Rows whose title misses the list above are still kept if the Software column
+# mentions one of these AND the location passes. Empty = disabled. Left empty
+# deliberately: Houdini-heavy adverts are usually FX roles.
+software_keywords = []
+
+# Rows marked Remote are kept even if their country is blank.
+keep_remote_without_country = true
+
+[locations]
+# Matched against both the Country and the Province/State/Region columns,
+# because the sheet frequently swaps the two for UK rows.
+allowed = [
+    # UK
+    "united kingdom", "uk", "england", "scotland", "wales", "northern ireland",
+    # Canada
+    "canada",
+    # US
+    "united states", "usa", "us", "united states of america",
+    # Europe
+    "ireland", "france", "germany", "spain", "portugal", "italy",
+    "netherlands", "belgium", "luxembourg", "switzerland", "austria",
+    "denmark", "sweden", "norway", "finland", "iceland",
+    "poland", "czech republic", "czechia", "slovakia", "hungary",
+    "romania", "bulgaria", "greece", "croatia", "slovenia", "serbia",
+    "estonia", "latvia", "lithuania", "malta", "cyprus", "ukraine",
+]

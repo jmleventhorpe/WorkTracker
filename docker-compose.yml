@@ -1,0 +1,7 @@
+services:
+  jobtracker:
+    build:
+      context: .
+    container_name: jobtracker
+    env_file: .env
+    restart: "no"
