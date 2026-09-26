@@ -102,16 +102,57 @@ def fetch_sheet(spreadsheet_id: str, gid: int) -> list[list[str]]:
     return list(csv.reader(io.StringIO(resp.text)))
 
 
+def normalise_header(raw: str) -> str:
+    """'Studio\\n(Featured listings in blue)' -> 'studio';
+    ' On-Site/\\nRemote/Hybrid' -> 'on-site/remote/hybrid'."""
+    text = re.sub(r"\([^)]*\)", " ", raw)
+    text = re.sub(r"\s*/\s*", "/", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def find_date_column(rows: list[list[str]], skip: set[int]) -> int | None:
+    """The sheet's date column has no header, so pick it by content."""
+    sample = rows[:40]
+    best, best_hits = None, 0
+    width = max((len(r) for r in sample), default=0)
+    for i in range(width):
+        if i in skip:
+            continue
+        hits = sum(1 for r in sample if i < len(r) and parse_date(r[i]))
+        if hits > best_hits:
+            best, best_hits = i, hits
+    return best if best_hits >= max(3, len(sample) // 2) else None
+
+
 def find_header(rows: list[list[str]]) -> tuple[int, dict[str, int]]:
-    """Locate the header row and map column name -> index."""
+    """Locate the header row and map column name -> index.
+
+    Headers are matched by prefix after normalising, so the notes Google
+    appends inside header cells don't break the match.
+    """
+    wanted = [COL_STUDIO, COL_CITY, COL_REGION, COL_COUNTRY, COL_TITLE,
+              COL_ONSITE, COL_DATE, COL_SOURCE, COL_SOFTWARE]
     for idx, row in enumerate(rows[:15]):
-        lowered = [c.strip().lower() for c in row]
-        if COL_STUDIO in lowered and COL_TITLE in lowered:
-            mapping = {name: i for i, name in enumerate(lowered) if name}
-            missing = [c for c in REQUIRED_COLS if c not in mapping]
-            if missing:
-                raise Fatal(f"Header row is missing columns: {missing}")
-            return idx, mapping
+        headers = [normalise_header(c) for c in row]
+        if not (any(h.startswith(COL_STUDIO) for h in headers)
+                and any(h.startswith(COL_TITLE) for h in headers)):
+            continue
+        mapping: dict[str, int] = {}
+        for name in wanted:
+            for i, h in enumerate(headers):
+                if h and h.startswith(name) and i not in mapping.values():
+                    mapping[name] = i
+                    break
+        missing = [c for c in REQUIRED_COLS if c not in mapping]
+        if missing:
+            raise Fatal(f"Header row is missing columns: {missing}")
+        if COL_DATE not in mapping:
+            date_col = find_date_column(rows[idx + 1:], set(mapping.values()))
+            if date_col is not None:
+                mapping[COL_DATE] = date_col
+            else:
+                print("  warning: no date column found; Date Issued left blank")
+        return idx, mapping
     raise Fatal(
         "No header row found in the first 15 rows. The sheet layout has "
         "changed; update the column names in sync.py before running again."
