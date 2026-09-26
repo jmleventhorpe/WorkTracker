@@ -15,7 +15,7 @@ import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -208,6 +208,10 @@ def collect_postings(rows: list[list[str]], cfg: dict) -> list[Posting]:
     header_idx, mapping = find_header(rows)
     merged: dict[tuple[str, str], Posting] = {}
     skipped_no_url = 0
+    skipped_old = 0
+    max_age = int(cfg["filters"].get("max_age_days", 0) or 0)
+    # ISO date strings compare correctly as strings.
+    cutoff = (date.today() - timedelta(days=max_age)).isoformat() if max_age else None
 
     for row in rows[header_idx + 1:]:
         if not any(c.strip() for c in row):
@@ -240,11 +244,15 @@ def collect_postings(rows: list[list[str]], cfg: dict) -> list[Posting]:
 
         city = cell(row, mapping, COL_CITY)
         loc = ", ".join(p for p in (city, country or region) if p)
+        date_issued = parse_date(cell(row, mapping, COL_DATE))
+        if cutoff and date_issued and date_issued < cutoff:
+            skipped_old += 1
+            continue
         posting = Posting(
             role=title,
             studio=studio,
             locations=[loc] if loc else [],
-            date_issued=parse_date(cell(row, mapping, COL_DATE)),
+            date_issued=date_issued,
             url=url,
         )
         existing = merged.get(posting.key)
@@ -257,6 +265,8 @@ def collect_postings(rows: list[list[str]], cfg: dict) -> list[Posting]:
 
     if skipped_no_url:
         print(f"  skipped {skipped_no_url} matching rows with no usable link")
+    if skipped_old:
+        print(f"  skipped {skipped_old} matching rows older than {max_age} days")
     return list(merged.values())
 
 

@@ -31,6 +31,7 @@ title_exclusions = [
     "effects artist",
     "cfx",
     "crowd",
+    "hr",       # HR Generalist etc.
 ]
 
 # Rows whose title misses the list above are still kept if the Software column
@@ -40,6 +41,10 @@ software_keywords = []
 
 # Rows marked Remote are kept even if their country is blank.
 keep_remote_without_country = true
+
+# Skip postings dated more than this many days ago. Rows with no parseable
+# date are kept, since their age can't be judged. 0 = no limit.
+max_age_days = 90
 
 [locations]
 # Matched against both the Country and the Province/State/Region columns,
