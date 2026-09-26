@@ -30,6 +30,7 @@ COL_CITY = "city"
 COL_REGION = "province/state/region"
 COL_COUNTRY = "country"
 COL_TITLE = "job title"
+COL_EXPERIENCE = "experience level"
 COL_ONSITE = "on-site/remote/hybrid"
 COL_DATE = "date"
 COL_SOURCE = "source/contact"
@@ -51,6 +52,8 @@ class Posting:
     locations: list[str] = field(default_factory=list)
     date_issued: str | None = None
     url: str = ""
+    experience: str = ""
+    work_mode: str = ""
 
     @property
     def key(self) -> tuple[str, str]:
@@ -64,6 +67,12 @@ class Posting:
                 seen.add(loc.lower())
                 out.append(loc)
         return ", ".join(out)
+
+
+def select_value(raw: str) -> str:
+    """Notion select options can't contain commas and cap at 100 chars."""
+    text = re.sub(r"\s+", " ", raw).strip()
+    return text.replace(",", " /")[:100]
 
 
 def normalise_url(url: str) -> str:
@@ -131,7 +140,7 @@ def find_header(rows: list[list[str]]) -> tuple[int, dict[str, int]]:
     appends inside header cells don't break the match.
     """
     wanted = [COL_STUDIO, COL_CITY, COL_REGION, COL_COUNTRY, COL_TITLE,
-              COL_ONSITE, COL_DATE, COL_SOURCE, COL_SOFTWARE]
+              COL_EXPERIENCE, COL_ONSITE, COL_DATE, COL_SOURCE, COL_SOFTWARE]
     for idx, row in enumerate(rows[:15]):
         headers = [normalise_header(c) for c in row]
         if not (any(h.startswith(COL_STUDIO) for h in headers)
@@ -254,12 +263,15 @@ def collect_postings(rows: list[list[str]], cfg: dict) -> list[Posting]:
             locations=[loc] if loc else [],
             date_issued=date_issued,
             url=url,
+            experience=select_value(cell(row, mapping, COL_EXPERIENCE)),
+            work_mode=select_value(onsite),
         )
         existing = merged.get(posting.key)
         if existing:
             existing.locations.extend(posting.locations)
-            if not existing.date_issued:
-                existing.date_issued = posting.date_issued
+            existing.date_issued = existing.date_issued or posting.date_issued
+            existing.experience = existing.experience or posting.experience
+            existing.work_mode = existing.work_mode or posting.work_mode
         else:
             merged[posting.key] = posting
 
@@ -274,6 +286,11 @@ def collect_postings(rows: list[list[str]], cfg: dict) -> list[Posting]:
 # Notion
 # --------------------------------------------------------------------------
 
+def _select_name(prop: dict | None) -> str:
+    sel = (prop or {}).get("select")
+    return (sel or {}).get("name", "") if sel else ""
+
+
 class Notion:
     def __init__(self, token: str, database_id: str):
         self.database_id = database_id
@@ -284,8 +301,10 @@ class Notion:
             "Content-Type": "application/json",
         })
 
-    def existing_keys(self) -> set[tuple[str, str]]:
-        keys: set[tuple[str, str]] = set()
+    def existing_pages(self) -> dict[tuple[str, str], dict]:
+        """Map (url, role) -> {'id', 'experience', 'work_mode'} for every row,
+        including Not Interested ones."""
+        pages: dict[tuple[str, str], dict] = {}
         payload: dict = {"page_size": 100}
         while True:
             resp = self.session.post(
@@ -294,21 +313,43 @@ class Notion:
             )
             if resp.status_code == 404:
                 raise Fatal(
-                    "Notion returned 404. The database is probably not shared "
-                    "with the integration (Notion database -> ... -> "
-                    "Connections)."
+                    "Notion returned 404. The token can't see the Job Tracker "
+                    "database, or NOTION_DATABASE_ID is wrong."
                 )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise Fatal(f"Notion query failed ({resp.status_code}): {resp.text}")
             data = resp.json()
             for page in data["results"]:
                 props = page["properties"]
                 url = (props.get("Posting URL") or {}).get("url") or ""
                 title_prop = (props.get("Role") or {}).get("title") or []
                 role = "".join(t.get("plain_text", "") for t in title_prop)
-                keys.add((normalise_url(url), role.strip().lower()))
+                pages[(normalise_url(url), role.strip().lower())] = {
+                    "id": page["id"],
+                    "experience": _select_name(props.get("Experience")),
+                    "work_mode": _select_name(props.get("Work Mode")),
+                }
             if not data.get("has_more"):
-                return keys
+                return pages
             payload["start_cursor"] = data["next_cursor"]
+
+    def fill_blanks(self, page: dict, posting: Posting) -> bool:
+        """Set Experience / Work Mode only where the Notion row is empty.
+        Never touches anything else, so manual edits survive."""
+        props: dict = {}
+        if not page["experience"] and posting.experience:
+            props["Experience"] = {"select": {"name": posting.experience}}
+        if not page["work_mode"] and posting.work_mode:
+            props["Work Mode"] = {"select": {"name": posting.work_mode}}
+        if not props:
+            return False
+        resp = self.session.patch(
+            f"{NOTION_API}/pages/{page['id']}",
+            json={"properties": props}, timeout=60,
+        )
+        if resp.status_code >= 400:
+            raise Fatal(f"Notion update failed ({resp.status_code}): {resp.text}")
+        return True
 
     def create(self, posting: Posting) -> None:
         props: dict = {
@@ -326,6 +367,10 @@ class Notion:
             props["Posting URL"] = {"url": posting.url[:2000]}
         if posting.date_issued:
             props["Date Issued"] = {"date": {"start": posting.date_issued}}
+        if posting.experience:
+            props["Experience"] = {"select": {"name": posting.experience}}
+        if posting.work_mode:
+            props["Work Mode"] = {"select": {"name": posting.work_mode}}
 
         resp = self.session.post(
             f"{NOTION_API}/pages",
@@ -365,24 +410,30 @@ def main() -> int:
         for p in sorted(postings, key=lambda p: p.studio.lower()):
             print(
                 f"  - {p.studio} | {p.role} | {p.location} | "
+                f"{p.experience or '-'} | {p.work_mode or '-'} | "
                 f"{p.date_issued or 'NO DATE'} | {p.url}"
             )
         return 0
 
     notion = Notion(token, database_id)
-    existing = notion.existing_keys()
+    existing = notion.existing_pages()
     print(f"  {len(existing)} rows already in Notion")
 
-    added = 0
+    added = updated = 0
     for posting in postings:
-        if posting.key in existing:
+        page = existing.get(posting.key)
+        if page:
+            if notion.fill_blanks(page, posting):
+                updated += 1
+                time.sleep(0.35)
             continue
         notion.create(posting)
         added += 1
         print(f"  + {posting.studio} | {posting.role}")
         time.sleep(0.35)  # stay under Notion's ~3 requests/second limit
 
-    print(f"Done. {added} added, {len(postings) - added} already present.")
+    print(f"Done. {added} added, {updated} existing rows filled in, "
+          f"{len(postings) - added} already present.")
     return 0
 
 
