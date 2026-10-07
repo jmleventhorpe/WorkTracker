@@ -18,12 +18,16 @@ title_keywords = [
     "lighting",
     "pipeline",
     "generalist",
+    "technical artist",
+    "technical director",
 ]
 
 # Dropped even if the title matched above. FX is a different discipline
 # (simulation work), so "FX / Lighting TD" style titles are excluded.
 title_exclusions = [
     "fx td",
+    "fx technical director",
+    "effects technical director",
     "fx artist",
     "fx supervisor",
     "fx lead",
